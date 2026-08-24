@@ -57,3 +57,17 @@ directives out of prose into config that evaluates itself.
 ## Milestones
 - [x] M1 v1.0.0 — scan+next (max+1), label reconciliation, sprint clock,
       standing items, json/statusline, exit contract, tests, publish.
+- [x] M2 v1.1.0 — label reconciliation config: `[labels] base = N` (journal =
+      base + label) + `[labels.map]` explicit pins (win over base). Motivation:
+      once the harness restarted numbering mid-journal ("#1" vs s70+), the
+      direct compare mismatched EVERY session — a permanent exit 1 trains the
+      owner to ignore the alarm (same false-block class as daybreak v1.4.0's
+      line-scoped claim binding). Mapped match = clean exit 0; wrong label or
+      offset still exits 1; malformed labels config exits 2. JSON appends
+      "expected" last (fixed-order consumers safe); human output notes which
+      mapping resolved ("maps to s78 via labels config"); statusline drops the
+      label-mismatch tail only on real matches. cli cfg-rebuild gotcha fixed:
+      the override path rebuilt cfg with two keys and would have silently
+      dropped any new section.
+- NEXT only on demand: multiple-journal merge reporting, label history ledger,
+  per-epoch base history (auto-suggest base when unmapped mismatch streaks).

@@ -57,7 +57,7 @@ python3 -m reveille [JOURNAL ...] [options]
 | `--ends-at EPOCH` | sprint end unix seconds (overrides config) |
 | `--config FILE` | TOML config (default `~/.config/reveille/config.toml`) |
 | `--now EPOCH` | inject current time (tests/cron determinism) |
-| `--json` | machine output, fixed key order |
+| `--json` | machine output, fixed key order (`expected` appended last in v1.1.0) |
 | `--statusline` | one-liner: `reveille s73 · 4d 23h left · standing: none` |
 
 ### Config
@@ -67,6 +67,12 @@ python3 -m reveille [JOURNAL ...] [options]
 [sprint]
 ends_at = 1787951442        # unix epoch
 
+[labels]
+base = 69                   # optional: journal counter = base + harness label
+
+[labels.map]                # optional explicit pins, win over base
+9 = 78
+
 [[item]]                     # fires when UTC date >= after (inclusive)
 name = "assistout-post"
 after = "2026-08-27"
@@ -75,6 +81,17 @@ note = "API died Aug 26 — post-deadline dogfood first"
 
 No config file = defaults (no sprint clock, no items). Missing journal file or
 malformed TOML = exit 2 — a broken input never fakes clean.
+
+#### Label reconciliation
+
+By default an injected label must equal the derived counter directly. That
+breaks the moment your harness restarts its numbering (fresh epoch starts at
+`#1` while your journal continues at s70+): every session would mismatch
+forever and the alarm becomes noise. Configure `[labels] base = N` once per
+harness epoch — label `#9` then reconciles against `s(N+9)` — or pin exact
+pairs under `[labels.map]`. A mapped match is clean (exit 0); a wrong label,
+wrong offset, or missing mapping still mismatches (exit 1), so the signal only
+fires when something is genuinely off.
 
 ### Exit codes
 

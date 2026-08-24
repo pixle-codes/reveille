@@ -113,7 +113,7 @@ class TestStandingItems(unittest.TestCase):
 class TestLoadConfig(unittest.TestCase):
     def test_missing_file_defaults(self):
         cfg = core.load_config("/nonexistent/reveille/config.toml")
-        self.assertEqual(cfg, {"ends_at": None, "items": []})
+        self.assertEqual(cfg, {"ends_at": None, "items": [], "labels": {}})
 
     def test_full_config(self):
         import tempfile, os
@@ -138,6 +138,72 @@ class TestLoadConfig(unittest.TestCase):
                 core.load_config(path)
         finally:
             os.unlink(path)
+
+    def _write(self, body):
+        import tempfile, os
+        f = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False)
+        f.write(body)
+        f.close()
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_labels_base_parsed(self):
+        cfg = core.load_config(self._write("[labels]\nbase = 69\n"))
+        self.assertEqual(cfg["labels"], {"base": 69, "map": {}})
+
+    def test_labels_map_parsed(self):
+        cfg = core.load_config(self._write(
+            "[labels.map]\n9 = 78\n'12' = 81\n"))
+        self.assertEqual(cfg["labels"]["map"], {"9": 78, "12": 81})
+
+    def test_labels_bad_base_raises(self):
+        with self.assertRaises(ValueError):
+            core.load_config(self._write("[labels]\nbase = 'sixty'\n"))
+
+    def test_labels_bool_base_raises(self):
+        with self.assertRaises(ValueError):
+            core.load_config(self._write("[labels]\nbase = true\n"))
+
+    def test_labels_bad_map_value_raises(self):
+        with self.assertRaises(ValueError):
+            core.load_config(self._write("[labels.map]\n9 = 's78'\n"))
+
+    def test_labels_bad_map_key_raises(self):
+        with self.assertRaises(ValueError):
+            core.load_config(self._write("[labels.map]\nnext = 78\n"))
+
+
+class TestReconcile(unittest.TestCase):
+    CFG_PLAIN = {}
+
+    def test_no_label(self):
+        self.assertEqual(core.reconcile(None, 78, {}), (None, None))
+
+    def test_legacy_direct_compare(self):
+        self.assertEqual(core.reconcile(78, 78, {}), (True, 78))
+        self.assertEqual(core.reconcile(4, 78, {}), (False, 4))
+
+    def test_base_offset_match(self):
+        cfg = {"labels": {"base": 69, "map": {}}}
+        self.assertEqual(core.reconcile(9, 78, cfg), (True, 78))
+
+    def test_base_offset_mismatch(self):
+        cfg = {"labels": {"base": 70, "map": {}}}
+        self.assertEqual(core.reconcile(9, 78, cfg), (False, 79))
+
+    def test_map_wins_over_base(self):
+        cfg = {"labels": {"base": 1, "map": {"9": 78}}}
+        self.assertEqual(core.reconcile(9, 78, cfg), (True, 78))
+
+    def test_map_miss_falls_back_to_base(self):
+        cfg = {"labels": {"base": 69, "map": {"3": 72}}}
+        self.assertEqual(core.reconcile(9, 78, cfg), (True, 78))
+
+    def test_mapped_mismatch_still_false(self):
+        cfg = {"labels": {"base": 69, "map": {}}}
+        match, expected = core.reconcile(5, 78, cfg)
+        self.assertIs(match, False)
+        self.assertEqual(expected, 74)
 
 
 class TestBuildReportAndRender(unittest.TestCase):
@@ -174,6 +240,34 @@ class TestBuildReportAndRender(unittest.TestCase):
         self.assertIn("label-mismatch", core.statusline(js))
         self.assertIn("MISMATCHES", core.render_human(js))
 
+    def test_mapped_match_clean(self):
+        cfg = dict(self.CFG, labels={"base": 69, "map": {}})
+        js = core.build_report(SAMPLE, "/j", "#9", 1787522750, cfg)
+        # journal derives s73; label 9 + base 69 = 78 -> mismatch vs 73
+        self.assertIs(js["match"], False)
+        self.assertEqual(js["expected"], 78)
+        # matching case: base 64 puts label 9 on s73
+        cfg2 = dict(self.CFG, labels={"base": 64, "map": {}})
+        js2 = core.build_report(SAMPLE, "/j", "#9", 1787522750, cfg2)
+        self.assertIs(js2["match"], True)
+        self.assertNotIn("label-mismatch", core.statusline(js2))
+        self.assertIn("MATCHES", core.render_human(js2))
+        self.assertIn("maps to s73 via labels config", core.render_human(js2))
+
+    def test_json_expected_appended_last(self):
+        cfg = dict(self.CFG, labels={"base": 64, "map": {}})
+        js = core.build_report(SAMPLE, "/j", "#9", 1, cfg)
+        keys = tuple(js.keys())
+        self.assertEqual(keys[-1], "expected")
+        self.assertEqual(len(keys), len(core.JSON_KEY_ORDER))
+
+    def test_unmapped_render_byte_compatible(self):
+        text = core.render_human(
+            core.build_report(SAMPLE, "/j", "#73", 1, self.CFG))
+        self.assertIn("#73 MATCHES the journal counter — journal is "
+                      "authoritative", text)
+        self.assertNotIn("maps to", text)
+
 
 class TestCli(unittest.TestCase):
     def _journal(self, tmpdir, text=SAMPLE):
@@ -205,6 +299,34 @@ class TestCli(unittest.TestCase):
             jp = self._journal(pathlib.Path(td))
             rc = main([jp, "--label", "73", "--now", "1787522750"])
             self.assertEqual(rc, 0)
+
+    def test_config_labels_base_end_to_end(self):
+        import tempfile, pathlib, os
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "config.toml"
+            # journal derives s73; harness label 9 -> base 64
+            cp.write_text("[labels]\nbase = 64\n", encoding="utf-8")
+            rc = main([jp, "--label", "#9", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 0)
+            bad = pathlib.Path(td) / "bad.toml"
+            bad.write_text("[labels]\nbase = 65\n", encoding="utf-8")
+            rc = main([jp, "--label", "#9", "--now", "1787522750",
+                       "--config", str(bad)])
+            self.assertEqual(rc, 1)
+            os.unlink(cp)
+            os.unlink(bad)
+
+    def test_config_labels_malformed_exit2(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text("[labels]\nbase = 'x'\n", encoding="utf-8")
+            rc = main([jp, "--label", "9", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 2)
 
     def test_json_output_parseable(self):
         import tempfile, pathlib, io, contextlib

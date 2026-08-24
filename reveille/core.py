@@ -17,6 +17,7 @@ JSON_KEY_ORDER = (
     "sprint",
     "standing_fired",
     "journal",
+    "expected",
 )
 
 
@@ -47,6 +48,29 @@ def parse_label(raw: str | None) -> int | None:
     if not s.isdigit():
         return None
     return int(s)
+
+
+def reconcile(label: int | None, nxt: int, cfg: dict) -> tuple[bool | None,
+                                                               int | None]:
+    """(match, expected) — the counter this label maps to.
+
+    Without a [labels] config the comparison is direct (legacy). With
+    labels.map, an explicit pin wins; with labels.base, journal counter =
+    base + label. Harnesses that restart numbering between epochs would
+    otherwise mismatch every session forever and train the owner to ignore
+    the alarm."""
+    if label is None:
+        return None, None
+    lbl = cfg.get("labels") or {}
+    m = lbl.get("map") or {}
+    key = str(label)
+    if key in m:
+        expected = int(m[key])
+    elif isinstance(lbl.get("base"), int):
+        expected = lbl["base"] + label
+    else:
+        expected = label
+    return (expected == nxt), expected
 
 
 def human_left(seconds: int) -> str:
@@ -104,11 +128,12 @@ DEFAULT_CONFIG_PATH = Path("~/.config/reveille/config.toml")
 
 
 def load_config(path: str | Path | None) -> dict:
-    """Returns {'ends_at': int|None, 'items': [..]}. Missing file = defaults.
-    Malformed TOML raises ValueError (caller turns that into exit 2)."""
+    """Returns {'ends_at': int|None, 'items': [..], 'labels': {...}}.
+    Missing file = defaults. Malformed TOML raises ValueError (caller turns
+    that into exit 2)."""
     p = Path(path).expanduser() if path else DEFAULT_CONFIG_PATH.expanduser()
     if not p.is_file():
-        return {"ends_at": None, "items": []}
+        return {"ends_at": None, "items": [], "labels": {}}
     import tomllib
 
     with open(p, "rb") as f:
@@ -117,7 +142,30 @@ def load_config(path: str | Path | None) -> dict:
     if ends_at is not None and not isinstance(ends_at, int):
         raise ValueError("sprint.ends_at must be an integer unix epoch")
     items = list(raw.get("item", []))
-    return {"ends_at": ends_at, "items": items}
+
+    lbl_raw = raw.get("labels", {})
+    if lbl_raw is None:
+        lbl_raw = {}
+    if not isinstance(lbl_raw, dict):
+        raise ValueError("[labels] must be a table")
+    labels: dict = {"base": None, "map": {}}
+    base = lbl_raw.get("base")
+    if base is not None:
+        if isinstance(base, bool) or not isinstance(base, int):
+            raise ValueError("labels.base must be an integer offset")
+        labels["base"] = base
+    mapping = lbl_raw.get("map")
+    if mapping is not None:
+        if not isinstance(mapping, dict):
+            raise ValueError("labels.map must be a table of label = counter")
+        for k, v in mapping.items():
+            if not k.strip().lstrip("#").isdigit():
+                raise ValueError(f"labels.map key {k!r} is not a label number")
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise ValueError(f"labels.map[{k!r}] must be an integer "
+                                 "journal counter")
+        labels["map"] = dict(mapping)
+    return {"ends_at": ends_at, "items": items, "labels": labels}
 
 
 def statusline(js: dict) -> str:
@@ -136,7 +184,7 @@ def build_report(text: str, journal_path: str, label_raw: str | None,
                  now: int, cfg: dict) -> dict:
     nxt, last = derive_counter(text)
     label = parse_label(label_raw)
-    match = None if label is None else (label == nxt)
+    match, expected = reconcile(label, nxt, cfg)
     js = {
         "next": nxt,
         "last": last,
@@ -145,6 +193,7 @@ def build_report(text: str, journal_path: str, label_raw: str | None,
         "sprint": sprint_block(now, cfg["ends_at"]),
         "standing_fired": standing_fired(cfg["items"], now),
         "journal": journal_path,
+        "expected": expected,
     }
     return {k: js[k] for k in JSON_KEY_ORDER}
 
@@ -157,8 +206,11 @@ def render_human(js: dict) -> str:
     lines.append(counter)
     if js["label"] is not None:
         verdict = "MATCHES" if js["match"] else "MISMATCHES"
-        lines.append(f"briefing label #{js['label']} {verdict} the journal "
-                     f"counter — journal is authoritative")
+        line = f"briefing label #{js['label']} {verdict} the journal counter"
+        if js["expected"] is not None and js["expected"] != js["label"]:
+            line += f" (maps to s{js['expected']} via labels config)"
+        line += " — journal is authoritative"
+        lines.append(line)
     sp = js["sprint"]
     if sp["human"] is not None:
         lines.append(f"sprint time left: {sp['human']}"

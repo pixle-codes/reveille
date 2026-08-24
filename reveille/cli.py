@@ -53,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"reveille: malformed config: {e}", file=sys.stderr)
         return 2
     ends_at = args.ends_at if args.ends_at is not None else cfg["ends_at"]
-    cfg = {"ends_at": ends_at, "items": cfg["items"]}
+    cfg = {"ends_at": ends_at, "items": cfg["items"],
+           "labels": cfg.get("labels") or {}}
 
     texts = []
     for p in paths:
