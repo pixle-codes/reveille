@@ -97,6 +97,18 @@ pick. A mapped match is clean (exit 0); a wrong label,
 wrong offset, or missing mapping still mismatches (exit 1), so the signal only
 fires when something is genuinely off.
 
+When the mismatch is just a missing pin (harness skipped numbers by dying
+unlogged — the usual case), `--adopt` closes the loop in the same run: it
+writes `<label> = <journal counter>` into `[labels.map]` (comments and other
+sections preserved), re-checks, and exits 0 only if the adopted pin actually
+reconciles. It refuses — exit 1, config untouched — when a pin for that label
+already exists but disagrees, because overwriting it would fake the count;
+resolve those by hand. Without a mismatch or a label it is a no-op.
+
+```sh
+python3 -m reveille --label "#23" --adopt   # writes 23 = 89, re-checks, exit 0
+```
+
 ### Exit codes
 
 | Code | Meaning |

@@ -18,6 +18,7 @@ JSON_KEY_ORDER = (
     "standing_fired",
     "journal",
     "expected",
+    "adopted",
 )
 
 
@@ -176,6 +177,27 @@ def load_config(path: str | Path | None) -> dict:
     return {"ends_at": ends_at, "items": items, "labels": labels}
 
 
+def insert_map_pin(text: str, label: int, counter: int) -> str:
+    """Config text with `label = counter` added under [labels.map].
+
+    Inserts directly after the existing [labels.map] header when present
+    (key order inside a TOML table carries no meaning); otherwise appends
+    a new [labels.map] section at the end of the file. Bare integer keys
+    are valid TOML and normalize to the same pin as '#21' spellings."""
+    line = f"{label} = {counter}"
+    pat = re.compile(r"^[ \t]*\[labels\.map\][^\n]*$", re.MULTILINE)
+    m = pat.search(text)
+    if not m:
+        sep = "" if (not text or text.endswith("\n")) else "\n"
+        return f"{text}{sep}\n[labels.map]\n{line}\n"
+    ins = m.end()
+    if text[ins:ins + 2] == "\r\n":
+        ins += 2
+    elif text[ins:ins + 1] == "\n":
+        ins += 1
+    return text[:ins] + f"{line}\n" + text[ins:]
+
+
 def statusline(js: dict) -> str:
     parts = [f"reveille s{js['next']}"]
     sp = js["sprint"]
@@ -185,11 +207,13 @@ def statusline(js: dict) -> str:
     parts.append(f"standing: {names}")
     if js["match"] is False:
         parts.append("label-mismatch")
+    if js.get("adopted"):
+        parts.append("pin adopted")
     return " · ".join(parts)
 
 
 def build_report(text: str, journal_path: str, label_raw: str | None,
-                 now: int, cfg: dict) -> dict:
+                 now: int, cfg: dict, adopted: dict | None = None) -> dict:
     nxt, last = derive_counter(text)
     label = parse_label(label_raw)
     match, expected = reconcile(label, nxt, cfg)
@@ -202,6 +226,7 @@ def build_report(text: str, journal_path: str, label_raw: str | None,
         "standing_fired": standing_fired(cfg["items"], now),
         "journal": journal_path,
         "expected": expected,
+        "adopted": adopted,
     }
     return {k: js[k] for k in JSON_KEY_ORDER}
 
@@ -228,4 +253,8 @@ def render_human(js: dict) -> str:
         lines.append(f"standing item FIRES: {it['name']} (since {it['after']}){note}")
     if not js["standing_fired"]:
         lines.append("standing items: none fire today")
+    if js.get("adopted"):
+        ad = js["adopted"]
+        lines.append(f"pin adopted: #{ad['label']} -> s{ad['counter']} "
+                     f"(written to {ad['config']})")
     return "\n".join(lines)

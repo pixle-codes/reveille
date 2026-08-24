@@ -264,12 +264,19 @@ class TestBuildReportAndRender(unittest.TestCase):
         self.assertIn("MATCHES", core.render_human(js2))
         self.assertIn("maps to s73 via labels config", core.render_human(js2))
 
-    def test_json_expected_appended_last(self):
+    def test_json_adopted_appended_last(self):
         cfg = dict(self.CFG, labels={"base": 64, "map": {}})
         js = core.build_report(SAMPLE, "/j", "#9", 1, cfg)
         keys = tuple(js.keys())
-        self.assertEqual(keys[-1], "expected")
+        self.assertEqual(keys[-1], "adopted")
+        self.assertIs(js["adopted"], None)
+        self.assertEqual(keys[-2], "expected")
         self.assertEqual(len(keys), len(core.JSON_KEY_ORDER))
+        adopted = core.build_report(SAMPLE, "/j", "#9", 1, cfg,
+                                    {"label": 9, "counter": 73,
+                                     "config": "/c"})
+        self.assertEqual(tuple(adopted.keys()), keys)
+        self.assertEqual(adopted["adopted"]["counter"], 73)
 
     def test_unmapped_render_byte_compatible(self):
         text = core.render_human(
@@ -397,6 +404,128 @@ class TestCli(unittest.TestCase):
         # load_config(None) must not raise even with no HOME config present
         cfg = core.load_config(str(core.DEFAULT_CONFIG_PATH) + ".definitely-absent")
         self.assertEqual(cfg["items"], [])
+
+
+class TestInsertMapPin(unittest.TestCase):
+    def test_inserts_after_existing_header(self):
+        text = "[labels]\nbase = 69\n\n[labels.map]\n'#19' = 87\n\n[[item]]\n"
+        out = core.insert_map_pin(text, 21, 89)
+        self.assertIn("[labels.map]\n21 = 89\n'#19' = 87\n", out)
+        self.assertIn("[[item]]", out)
+
+    def test_appends_section_when_absent(self):
+        out = core.insert_map_pin("[labels]\nbase = 69\n", 4, 73)
+        self.assertEqual(out, "[labels]\nbase = 69\n\n[labels.map]\n4 = 73\n")
+
+    def test_empty_text_creates_minimal_config(self):
+        self.assertEqual(core.insert_map_pin("", 9, 78),
+                         "\n[labels.map]\n9 = 78\n")
+
+    def test_no_trailing_newline_handled(self):
+        out = core.insert_map_pin("[labels]\nbase = 1", 2, 3)
+        self.assertTrue(out.endswith("\n[labels.map]\n2 = 3\n"))
+
+    def test_roundtrip_through_load_config(self):
+        import tomllib
+        text = core.insert_map_pin(
+            core.insert_map_pin("[sprint]\nends_at = 5\n", 19, 87), 20, 88)
+        raw = tomllib.loads(text)
+        self.assertEqual(raw["labels"]["map"], {"19": 87, "20": 88})
+
+
+class TestAdoptCli(unittest.TestCase):
+    JOURNAL = None  # SAMPLE derives s73
+
+    def setUp(self):
+        import tempfile, pathlib
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        patcher = mock.patch.object(
+            core, "DEFAULT_CONFIG_PATH",
+            pathlib.Path(self._td.name) / "adopt-default.toml")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _journal(self):
+        import pathlib
+        p = pathlib.Path(self._td.name) / "STATE.md"
+        p.write_text(SAMPLE, encoding="utf-8")
+        return str(p)
+
+    def test_adopt_writes_pin_and_exits0_same_run(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text("[labels]\nbase = 60\n", encoding="utf-8")
+            rc = main([jp, "--label", "#9", "--now", "1787522750",
+                       "--config", str(cp), "--adopt"])
+            self.assertEqual(rc, 0)
+            text = cp.read_text(encoding="utf-8")
+            self.assertIn("9 = 73", text)
+            # idempotent second run without --adopt
+            rc = main([jp, "--label", "#9", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 0)
+
+    def test_adopt_creates_missing_config_file(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "fresh" / "cfg.toml"
+            rc = main([jp, "--label", "#4", "--now", "1787522750",
+                       "--config", str(cp), "--adopt"])
+            self.assertEqual(rc, 0)
+            self.assertIn("4 = 73", cp.read_text(encoding="utf-8"))
+
+    def test_adopt_refuses_conflicting_existing_pin(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "cfg.toml"
+            original = "[labels.map]\n'9' = 99\n"
+            cp.write_text(original, encoding="utf-8")
+            rc = main([jp, "--label", "#9", "--now", "1787522750",
+                       "--config", str(cp), "--adopt"])
+            self.assertEqual(rc, 1)
+            self.assertEqual(cp.read_text(encoding="utf-8"), original)
+
+    def test_adopt_with_matching_label_is_noop(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "absent.toml"
+            rc = main([jp, "--label", "73", "--now", "1787522750",
+                       "--config", str(cp), "--adopt"])
+            self.assertEqual(rc, 0)
+            self.assertFalse(cp.exists())
+
+    def test_adopt_without_label_is_noop(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "absent.toml"
+            rc = main([jp, "--now", "1787522750",
+                       "--config", str(cp), "--adopt"])
+            self.assertEqual(rc, 0)
+            self.assertFalse(cp.exists())
+
+    def test_adopt_json_has_adopted_key_last_and_exit0(self):
+        import tempfile, pathlib, io, contextlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal()
+            cp = pathlib.Path(td) / "cfg.toml"
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([jp, "--label", "#9", "--now", "1787522750",
+                           "--config", str(cp), "--adopt", "--json"])
+            js = json.loads(buf.getvalue())
+            self.assertEqual(rc, 0)
+            self.assertEqual(tuple(js.keys()), core.JSON_KEY_ORDER)
+            self.assertEqual(js["adopted"],
+                             {"label": 9, "counter": 73,
+                              "config": str(cp)})
+            self.assertIs(js["match"], True)
 
 
 if __name__ == "__main__":

@@ -81,5 +81,20 @@ directives out of prose into config that evaluates itself.
       share a format contract, normalize ONCE at the boundary where data
       enters — validating one spelling while looking up another is a bug the
       first real-world use of the feature will find.
+- [x] M4 v1.3.0 — `--adopt` self-adoption of missing pins. Salvaged from an
+      unlogged dead session (#21/#22 both hand-wrote pins then died before any
+      journal write — the 8th consecutive session needing label archaeology).
+      On mismatch with no existing pin for that label: insert
+      `<label> = <counter>` after the [labels.map] header via text-level edit
+      (comments preserved; bare integer keys are valid TOML and normalize like
+      '#N'), reload, re-check in the SAME run — POST-state exit per the salve
+      precedent. Refuses (exit 1, untouched) on a disagreeing existing pin:
+      journal counter stays authoritative, adoption never fakes it. JSON gains
+      "adopted" LAST (append-only growth of the fixed key order). GOTCHA hit
+      twice while finishing the salvage: multiline `$` matches BEFORE the
+      newline (inserting at m.end() glues the pin onto the header line — skip
+      past the line terminator first), and the fixture-arithmetic class struck
+      AGAIN (base=64 + label 9 = s73 accidentally matched, so adopt never
+      fired; derive expected values, never eyeball them).
 - NEXT only on demand: multiple-journal merge reporting, label history ledger,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).
