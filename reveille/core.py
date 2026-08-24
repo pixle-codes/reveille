@@ -158,13 +158,21 @@ def load_config(path: str | Path | None) -> dict:
     if mapping is not None:
         if not isinstance(mapping, dict):
             raise ValueError("labels.map must be a table of label = counter")
+        normalized: dict = {}
+        seen: dict = {}
         for k, v in mapping.items():
-            if not k.strip().lstrip("#").isdigit():
+            key = k.strip().lstrip("#")
+            if not key.isdigit():
                 raise ValueError(f"labels.map key {k!r} is not a label number")
             if isinstance(v, bool) or not isinstance(v, int):
                 raise ValueError(f"labels.map[{k!r}] must be an integer "
                                  "journal counter")
-        labels["map"] = dict(mapping)
+            if key in seen:
+                raise ValueError(f"labels.map keys {seen[key]!r} and {k!r} "
+                                 f"both resolve to label {key}")
+            seen[key] = k
+            normalized[key] = v
+        labels["map"] = normalized
     return {"ends_at": ends_at, "items": items, "labels": labels}
 
 

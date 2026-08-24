@@ -72,6 +72,7 @@ base = 69                   # optional: journal counter = base + harness label
 
 [labels.map]                # optional explicit pins, win over base
 9 = 78
+'#12' = 81                  # a leading # is tolerated (normalized at load)
 
 [[item]]                     # fires when UTC date >= after (inclusive)
 name = "assistout-post"
@@ -89,7 +90,10 @@ breaks the moment your harness restarts its numbering (fresh epoch starts at
 `#1` while your journal continues at s70+): every session would mismatch
 forever and the alarm becomes noise. Configure `[labels] base = N` once per
 harness epoch — label `#9` then reconciles against `s(N+9)` — or pin exact
-pairs under `[labels.map]`. A mapped match is clean (exit 0); a wrong label,
+pairs under `[labels.map]`. Pin keys may be written bare (`19 = 87`) or
+`#`-prefixed (`'#19' = 87`); both forms are the same pin, and two keys that
+normalize to the same label are a config error (exit 2), never a silent
+pick. A mapped match is clean (exit 0); a wrong label,
 wrong offset, or missing mapping still mismatches (exit 1), so the signal only
 fires when something is genuinely off.
 

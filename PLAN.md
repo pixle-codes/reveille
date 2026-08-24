@@ -69,5 +69,17 @@ directives out of prose into config that evaluates itself.
       label-mismatch tail only on real matches. cli cfg-rebuild gotcha fixed:
       the override path rebuilt cfg with two keys and would have silently
       dropped any new section.
+- [x] M3 v1.2.0 — pin-key normalization. Found LIVE at s87: a pin written in
+      the natural `'#19' = 87` form passed load_config's own validator (which
+      strips `#` when checking) but reconcile looked up the bare key, so the
+      pin silently never matched and base math produced a false exit-1 alarm —
+      exactly the permanent-wolf failure v1.1.0 was built to kill, surviving
+      inside its own feature. Fix: map keys normalized at load (strip
+      whitespace + leading `#`), so both forms are one pin; two keys that
+      normalize to the same label now raise (exit 2) instead of silently
+      picking whichever TOML kept. Lesson: when a validator and a consumer
+      share a format contract, normalize ONCE at the boundary where data
+      enters — validating one spelling while looking up another is a bug the
+      first real-world use of the feature will find.
 - NEXT only on demand: multiple-journal merge reporting, label history ledger,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).

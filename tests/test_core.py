@@ -172,6 +172,16 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             core.load_config(self._write("[labels.map]\nnext = 78\n"))
 
+    def test_labels_hash_prefixed_keys_normalized(self):
+        cfg = core.load_config(self._write(
+            "[labels.map]\n'#19' = 87\n' 12 ' = 81\n"))
+        self.assertEqual(cfg["labels"]["map"], {"19": 87, "12": 81})
+
+    def test_labels_colliding_keys_raise(self):
+        with self.assertRaises(ValueError):
+            core.load_config(self._write(
+                "[labels.map]\n'19' = 87\n'#19' = 88\n"))
+
 
 class TestReconcile(unittest.TestCase):
     CFG_PLAIN = {}
@@ -339,6 +349,37 @@ class TestCli(unittest.TestCase):
             cp = pathlib.Path(td) / "cfg.toml"
             cp.write_text("[labels]\nbase = 'x'\n", encoding="utf-8")
             rc = main([jp, "--label", "9", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 2)
+
+    def test_config_hash_prefixed_pin_matches(self):
+        # The v1.1.0 live false-alarm: a pin written as '#19' passed the
+        # validator but reconcile looked up '19', silently falling through
+        # to base math (69+19=88) and flagging exit 1 forever.
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text("[labels]\nbase = 69\n\n[labels.map]\n'#4' = 73\n",
+                          encoding="utf-8")
+            rc = main([jp, "--label", "#4", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 0)
+            wrong = pathlib.Path(td) / "wrong.toml"
+            wrong.write_text("[labels]\nbase = 69\n\n[labels.map]\n'#4' = 99\n",
+                             encoding="utf-8")
+            rc = main([jp, "--label", "#4", "--now", "1787522750",
+                       "--config", str(wrong)])
+            self.assertEqual(rc, 1)
+
+    def test_config_colliding_pin_keys_exit2(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text("[labels.map]\n'19' = 87\n'#19' = 88\n",
+                          encoding="utf-8")
+            rc = main([jp, "--label", "19", "--now", "1787522750",
                        "--config", str(cp)])
             self.assertEqual(rc, 2)
 
