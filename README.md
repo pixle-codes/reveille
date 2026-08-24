@@ -57,7 +57,9 @@ python3 -m reveille [JOURNAL ...] [options]
 | `--ends-at EPOCH` | sprint end unix seconds (overrides config) |
 | `--config FILE` | TOML config (default `~/.config/reveille/config.toml`) |
 | `--now EPOCH` | inject current time (tests/cron determinism) |
-| `--json` | machine output, fixed key order (`expected` appended last in v1.1.0) |
+| `--adopt` | on mismatch, write pin `label -> journal counter` into `[labels.map]`, re-check same run; refuses on disagreeing existing pin |
+| `--prune-stale` | remove pins that invert the label→counter order (retired-epoch leftovers); runs before `--adopt` |
+| `--json` | machine output, fixed key order (`expected` v1.1.0, `adopted` v1.3.0, `pruned` v1.4.0 — each appended last) |
 | `--statusline` | one-liner: `reveille s73 · 4d 23h left · standing: none` |
 
 ### Config
@@ -108,6 +110,33 @@ resolve those by hand. Without a mismatch or a label it is a no-op.
 ```sh
 python3 -m reveille --label "#23" --adopt   # writes 23 = 89, re-checks, exit 0
 ```
+
+#### Retired-epoch pins (`--prune-stale`)
+
+Pins are only meaningful inside ONE harness numbering epoch. If your harness
+restarts its labels, pins from the retired epoch stay in `[labels.map]` and —
+the moment the new epoch reissues those label numbers — block `--adopt`
+forever with a refusal you can only resolve by archaeology. The mechanical
+signature: within a live epoch, sorted by label, pin counters never decrease
+(gaps are normal; decreases are impossible). A decrease proves the pin came
+from a retired epoch.
+
+- Every refusal on an existing pin now names how many pins invert that order
+  and points at this flag.
+- `--prune-stale` removes exactly the inverting pins (section-scoped,
+  text-level edit — comments and other sections byte-preserved) and reports
+  what was cut; it removes nothing else. Combined with `--adopt` a reused
+  label re-adopts to the journal counter in one run (POST-state exit).
+- A single non-inverted pin that merely disagrees is NOT stale: prune leaves
+  it and adopt still refuses — genuine disagreement stays a human decision.
+
+```sh
+python3 -m reveille --label "#19" --adopt --prune-stale
+# -> pruned 1 stale pin(s): #19=s87 ... pin adopted: #19 -> s103
+```
+
+`--json` appends `"pruned"` last when the flag is used; the statusline gains
+a `N stale pruned` segment only when something was actually cut.
 
 ### Exit codes
 

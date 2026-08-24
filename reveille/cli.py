@@ -33,6 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="on label mismatch, write the pin label -> journal "
                         "counter into [labels.map] and re-check in the same "
                         "run; refuses if a pin for this label already exists")
+    p.add_argument("--prune-stale", action="store_true",
+                   help="remove pins that invert the label->counter order "
+                        "(leftovers of a retired harness-numbering epoch); "
+                        "runs before --adopt so a reused label can re-adopt")
     p.add_argument("--json", action="store_true", dest="as_json")
     p.add_argument("--statusline", action="store_true")
     p.add_argument("--version", action="version",
@@ -69,7 +73,35 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     merged = "\n".join(texts)
 
+    pruned: list[dict] | None = None
+    if args.prune_stale:
+        stale = core.find_stale_pins((cfg.get("labels") or {}).get("map")
+                                     or {})
+        cfg_path = (Path(args.config).expanduser() if args.config
+                    else core.DEFAULT_CONFIG_PATH.expanduser())
+        if stale and cfg_path.is_file():
+            try:
+                old_text = cfg_path.read_text(encoding="utf-8")
+                new_text, removed = core.remove_map_pins(
+                    old_text, {p["label"] for p in stale})
+                if removed:
+                    cfg_path.write_text(new_text, encoding="utf-8")
+                    reloaded = core.load_config(str(cfg_path))
+                    cfg = {"ends_at": cfg["ends_at"], "items": cfg["items"],
+                           "labels": reloaded["labels"]}
+                    pruned = removed
+            except OSError as e:
+                print(f"reveille: cannot write config {cfg_path}: {e}",
+                      file=sys.stderr)
+                return 2
+            except Exception as e:
+                print(f"reveille: malformed config after prune: {e}",
+                      file=sys.stderr)
+                return 2
+
     js = core.build_report(merged, str(paths[0]), args.label, now, cfg)
+    if pruned is not None:
+        js["pruned"] = pruned
 
     if args.adopt and js["match"] is False and js["label"] is not None:
         cfg_path = (Path(args.config).expanduser() if args.config
@@ -79,10 +111,16 @@ def main(argv: list[str] | None = None) -> int:
         if key in existing:
             # A pin already exists and disagrees with the journal (otherwise
             # reconcile would not have mismatched): overwriting it would fake
-            # the count. Human decision required.
-            print(f"reveille: refusing to adopt: pin #{key} already maps to "
-                  f"s{existing[key]} in {cfg_path} — resolve by hand",
-                  file=sys.stderr)
+            # the count. Human decision required. If the pin inverts the
+            # label->counter order it is a retired-epoch leftover — say so,
+            # but still never touch the config without --prune-stale.
+            msg = (f"reveille: refusing to adopt: pin #{key} already maps to "
+                   f"s{existing[key]} in {cfg_path} — resolve by hand")
+            if core.find_stale_pins(existing):
+                msg += (f" ({len(core.find_stale_pins(existing))} pin(s) "
+                        f"invert the label order, likely retired-epoch — "
+                        f"--prune-stale removes them)")
+            print(msg, file=sys.stderr)
             return 1
         try:
             old = cfg_path.read_text(encoding="utf-8") \
@@ -107,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
                "labels": reloaded["labels"]}
         js = core.build_report(merged, str(paths[0]), args.label, now, cfg,
                                adopted)
+        if pruned is not None:
+            js["pruned"] = pruned
 
     if args.as_json:
         print(json.dumps(js))

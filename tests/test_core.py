@@ -528,5 +528,168 @@ class TestAdoptCli(unittest.TestCase):
             self.assertIs(js["match"], True)
 
 
+class TestFindStalePins(unittest.TestCase):
+    def test_real_s103_collision_shape(self):
+        # The live s103 config: sprint-epoch pins 2..18 climb monotonically,
+        # then retired pre-s91 epoch pins (#19..#25, plus oddball 26/29)
+        # dip BELOW the chain — every one of them must be flagged.
+        pins = {"2": 91, "3": 92, "5": 92, "6": 93, "7": 94, "8": 95,
+                "10": 96, "11": 97, "12": 97, "13": 98, "15": 99,
+                "16": 100, "17": 101, "18": 102,
+                "#19": 87, "#20": 88, "#21": 89, "#22": 89,
+                "23": 89, "24": 90, "25": 90, "26": 91, "29": 91}
+        stale = core.find_stale_pins(pins)
+        self.assertEqual([p["label"] for p in stale],
+                         [19, 20, 21, 22, 23, 24, 25, 26, 29])
+        self.assertEqual(stale[0], {"label": 19, "counter": 87})
+
+    def test_monotone_with_gaps_and_equal_counters_is_clean(self):
+        pins = {"2": 91, "5": 91, "6": 93, "12": 97, "18": 102}
+        self.assertEqual(core.find_stale_pins(pins), [])
+
+    def test_empty_map(self):
+        self.assertEqual(core.find_stale_pins({}), [])
+
+    def test_single_pin_never_inverts(self):
+        self.assertEqual(core.find_stale_pins({"19": 4}), [])
+
+
+class TestRemoveMapPins(unittest.TestCase):
+    CFG = ("# header comment\n"
+           "[sprint]\nends_at = 1\n"
+           "[labels]\nbase = 69\n"
+           "[labels.map]\n"
+           "18 = 72\n"
+           "'#19' = 50\n"
+           '"#20" = 51\n'
+           "# keep this comment\n"
+           "[[item]]\nname = \"x\"\nafter = \"2026-01-01\"\n")
+
+    def test_removes_quoted_and_bare_keeps_rest(self):
+        new_text, removed = core.remove_map_pins(self.CFG, {19, 20})
+        self.assertEqual(removed, [{"label": 19, "counter": 50},
+                                   {"label": 20, "counter": 51}])
+        map_body = new_text.split("[labels.map]")[1].split("[[item]]")[0]
+        self.assertIn("18 = 72", map_body)
+        self.assertNotIn("50", map_body)
+        self.assertNotIn("51", map_body)
+        self.assertIn("# keep this comment", new_text)
+        self.assertIn("[[item]]", new_text)
+        self.assertIn("[sprint]", new_text)
+
+    def test_noop_when_label_absent(self):
+        new_text, removed = core.remove_map_pins(self.CFG, {99})
+        self.assertEqual(new_text, self.CFG)
+        self.assertEqual(removed, [])
+
+    def test_same_line_outside_section_untouched(self):
+        text = ("[labels.map]\n19 = 50\n[other]\n19 = 999\n")
+        new_text, removed = core.remove_map_pins(text, {19})
+        self.assertEqual(removed, [{"label": 19, "counter": 50}])
+        self.assertIn("19 = 999", new_text)
+
+    def test_unparseable_pin_line_preserved(self):
+        text = "[labels.map]\nbroken =\n19 = 50\n"
+        new_text, removed = core.remove_map_pins(text, {19})
+        self.assertIn("broken =", new_text)
+        self.assertEqual(removed, [{"label": 19, "counter": 50}])
+
+
+class TestPruneStaleCli(unittest.TestCase):
+    def setUp(self):
+        import tempfile, pathlib
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        patcher = mock.patch.object(
+            core, "DEFAULT_CONFIG_PATH",
+            pathlib.Path(self._td.name) / "absent-config.toml")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _journal(self, tmpdir):
+        from tests.test_core import SAMPLE
+        p = tmpdir / "STATE.md"
+        p.write_text(SAMPLE, encoding="utf-8")  # next session: s73
+        return str(p)
+
+    MIXED = "[labels]\nbase = 69\n\n[labels.map]\n18 = 72\n'#19' = 50\n"
+
+    def test_prune_then_adopt_same_run(self):
+        import tempfile, pathlib, io, contextlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text(self.MIXED, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([jp, "--label", "#19", "--adopt",
+                           "--prune-stale", "--json",
+                           "--now", "1787522750", "--config", str(cp)])
+            self.assertEqual(rc, 0)
+            js = json.loads(buf.getvalue())
+            self.assertEqual(js["pruned"],
+                             [{"label": 19, "counter": 50}])
+            self.assertEqual(list(js.keys())[-2:], ["adopted", "pruned"])
+            text = cp.read_text(encoding="utf-8")
+            self.assertNotIn("'#19' = 50", text)
+            self.assertIn("18 = 72", text)      # live pin untouched
+            self.assertIn("19 = 73", text)      # adoption landed
+
+    def test_refusal_names_prune_hint_without_flag(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text(self.MIXED, encoding="utf-8")
+            before = cp.read_text(encoding="utf-8")
+            rc = main([jp, "--label", "#19", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 1)
+            self.assertEqual(cp.read_text(encoding="utf-8"), before)
+
+    def test_prune_alone_without_label(self):
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            cp.write_text(self.MIXED, encoding="utf-8")
+            rc = main([jp, "--prune-stale", "--now", "1787522750",
+                       "--config", str(cp)])
+            self.assertEqual(rc, 0)
+            text = cp.read_text(encoding="utf-8")
+            self.assertNotIn("'#19' = 50", text)
+            self.assertIn("18 = 72", text)
+
+    def test_prune_flag_on_clean_config_is_byte_noop(self):
+        import tempfile, pathlib, io, contextlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            clean = "[labels.map]\n18 = 72\n19 = 73\n"
+            cp.write_text(clean, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main([jp, "--prune-stale", "--json",
+                           "--now", "1787522750", "--config", str(cp)])
+            self.assertEqual(rc, 0)
+            js = json.loads(buf.getvalue())
+            self.assertNotIn("pruned", js)  # nothing cut -> key absent
+            self.assertEqual(cp.read_text(encoding="utf-8"), clean)
+
+    def test_genuine_disagreement_never_auto_pruned(self):
+        # A single non-inverted pin that simply disagrees is NOT stale:
+        # prune must leave it and adopt must still refuse (exit 1).
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as td:
+            jp = self._journal(pathlib.Path(td))
+            cp = pathlib.Path(td) / "cfg.toml"
+            honest = "[labels.map]\n'#19' = 99\n"
+            cp.write_text(honest, encoding="utf-8")
+            rc = main([jp, "--label", "#19", "--adopt", "--prune-stale",
+                       "--now", "1787522750", "--config", str(cp)])
+            self.assertEqual(rc, 1)
+            self.assertEqual(cp.read_text(encoding="utf-8"), honest)
+
+
 if __name__ == "__main__":
     unittest.main()

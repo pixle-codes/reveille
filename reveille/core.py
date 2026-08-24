@@ -207,9 +207,82 @@ def statusline(js: dict) -> str:
     parts.append(f"standing: {names}")
     if js["match"] is False:
         parts.append("label-mismatch")
+    if js.get("pruned"):
+        parts.append(f"{len(js['pruned'])} stale pruned")
     if js.get("adopted"):
         parts.append("pin adopted")
     return " · ".join(parts)
+
+
+def find_stale_pins(pins: dict) -> list[dict]:
+    """Pins that invert the monotone label->counter order.
+
+    Within ONE harness epoch labels come from an ever-increasing counter,
+    so adopted pins are non-decreasing in journal counter when sorted by
+    label (gaps from burned numbers are fine; decreases are impossible).
+    A decrease means the pin was written under a RETIRED numbering epoch
+    whose label values this epoch reissues — those pins block --adopt for
+    every reused label forever (first live instance s103: pre-s91 pins
+    '#19'=87.. collided when the sprint epoch reached label #19 again).
+    Equal counters stay legal (dead sibling sessions share a number)."""
+    def norm(k) -> int | None:
+        s = str(k).strip().lstrip("#").strip()
+        return int(s) if s.isdigit() else None
+
+    out: list[dict] = []
+    maxc: int | None = None
+    for lbl in sorted(pins, key=lambda k: norm(k) if norm(k) is not None
+                      else -1):
+        ctr_raw = pins[lbl]
+        if isinstance(ctr_raw, bool) or not isinstance(ctr_raw, int):
+            continue
+        if maxc is not None and ctr_raw < maxc:
+            out.append({"label": norm(lbl), "counter": ctr_raw})
+        else:
+            maxc = ctr_raw
+    return out
+
+
+_SECTION_RE = re.compile(r"^\s*\[labels\.map\].*$")
+
+
+def remove_map_pins(text: str, labels: set[int]) -> tuple[str, list[dict]]:
+    """(new_text, removed) — drop pin lines for `labels` from the
+    [labels.map] section ONLY; every other byte is preserved.
+
+    Returns the pins actually removed as [{'label': N, 'counter': C}]
+    (sorted by label) so callers can never claim more than was cut.
+    Key spellings normalize exactly like load_config (strip whitespace,
+    strip quotes, strip one leading '#'). Lines that do not parse as
+    pins (comments, blanks, foreign tables) are never touched."""
+    removed: list[dict] = []
+    out_lines: list[str] = []
+    in_map = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_map = bool(_SECTION_RE.match(line))
+            out_lines.append(line)
+            continue
+        if in_map and stripped and not stripped.startswith("#") \
+                and "=" in stripped:
+            key_side = stripped.split("=", 1)[0].strip()
+            if len(key_side) >= 2 and key_side[0] == key_side[-1] \
+                    and key_side[0] in "\"'":
+                key_side = key_side[1:-1]
+            norm = key_side.strip().lstrip("#").strip()
+            if norm.isdigit() and int(norm) in labels:
+                val_side = stripped.split("=", 1)[1].strip()
+                try:
+                    counter = int(val_side)
+                except ValueError:
+                    out_lines.append(line)
+                    continue
+                removed.append({"label": int(norm), "counter": counter})
+                continue
+        out_lines.append(line)
+    removed.sort(key=lambda d: d["label"])
+    return "".join(out_lines), removed
 
 
 def build_report(text: str, journal_path: str, label_raw: str | None,
@@ -253,6 +326,10 @@ def render_human(js: dict) -> str:
         lines.append(f"standing item FIRES: {it['name']} (since {it['after']}){note}")
     if not js["standing_fired"]:
         lines.append("standing items: none fire today")
+    if js.get("pruned"):
+        pl = ", ".join(f"#{p['label']}=s{p['counter']}"
+                       for p in js["pruned"])
+        lines.append(f"pruned {len(js['pruned'])} stale pin(s): {pl}")
     if js.get("adopted"):
         ad = js["adopted"]
         lines.append(f"pin adopted: #{ad['label']} -> s{ad['counter']} "

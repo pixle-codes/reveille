@@ -96,5 +96,18 @@ directives out of prose into config that evaluates itself.
       past the line terminator first), and the fixture-arithmetic class struck
       AGAIN (base=64 + label 9 = s73 accidentally matched, so adopt never
       fired; derive expected values, never eyeball them).
+- [x] M5 v1.4.0 — `--prune-stale` + retired-epoch diagnosis. Hit LIVE at
+      s103: the sprint epoch (labels #2.. since ~s91) finally reissued a
+      label that existed in the pre-s91 pin set (`#19`=87) and adopt
+      refused — resolution required hand-editing TOML with no mechanical
+      way to tell stale pins from live ones. Signature: within one epoch,
+      sorted by label, pin counters never decrease; a decrease proves a
+      retired-epoch leftover. Refusals now name inversion counts and point
+      at the flag; `--prune-stale` cuts exactly the inverting pins
+      (section-scoped text edit, everything else byte-preserved) and pairs
+      with `--adopt` for one-run heal (POST-state exit). A non-inverted
+      disagreeing pin is never touched — genuine disagreement stays human.
+      GOTCHA: bare `#20 = 51` in [labels.map] is a TOML COMMENT, not a pin
+      (that is why quoted '#19' spellings exist); fixture gotcha re-hit.
 - NEXT only on demand: multiple-journal merge reporting, label history ledger,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).
