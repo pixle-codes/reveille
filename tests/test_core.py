@@ -270,6 +270,19 @@ class TestBuildReportAndRender(unittest.TestCase):
 
 
 class TestCli(unittest.TestCase):
+    def setUp(self):
+        import tempfile, pathlib
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        # Hermetic default config: CLI tests must never read the real
+        # ~/.config/reveille/config.toml (a live [labels] section flips
+        # expected values — caught by allclear's fresh-clone suite run).
+        patcher = mock.patch.object(
+            core, "DEFAULT_CONFIG_PATH",
+            pathlib.Path(self._td.name) / "absent-config.toml")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _journal(self, tmpdir, text=SAMPLE):
         p = tmpdir / "STATE.md"
         p.write_text(text, encoding="utf-8")
@@ -283,7 +296,8 @@ class TestCli(unittest.TestCase):
         import tempfile, pathlib
         with tempfile.TemporaryDirectory() as td:
             jp = self._journal(pathlib.Path(td))
-            rc = main([jp, "--now", "1787522750", "--ends-at", "1787951442"])
+            argv = [jp, "--now", "1787522750", "--ends-at", "1787951442"]
+            rc = main(argv)
             self.assertEqual(rc, 0)
 
     def test_label_mismatch_exit1(self):
