@@ -121,5 +121,15 @@ directives out of prose into config that evaluates itself.
       GOTCHA (dead session's): clean-match fixture used label #12 against
       base 60 expecting s73 — 60+12=72; derive expected values, never
       eyeball (fixture-arithmetic class, third strike).
+- [x] M7 v1.6.0 — portable config paths in ledger records. The ledger baked
+      the absolute pack-time config path into every adopt/prune line; after
+      a home change every pre-migration line carries a dead /home/<old>/…
+      prefix (the jog v1.3.0 class, here display-only since nothing reads
+      the field back — rollup ignores it). `core.portable_path()` stores the
+      '~/…' form when under the CURRENT $HOME, verbatim otherwise
+      (sibling-of-home prefixes never collapse); stored lines are never
+      rewritten. Scratch-HOME drill through the real CLI proved '~/cfg.toml'
+      lands in the record and history readback stays green; real
+      ledger+config byte-untouched. +4 tests.
 - NEXT only on demand: multiple-journal merge reporting,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).
