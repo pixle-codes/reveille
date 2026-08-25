@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
                            "labels": reloaded["labels"]}
                     pruned = removed
                     records.append(core.make_prune_record(
-                        now, removed, str(cfg_path)))
+                        now, removed, core.portable_path(cfg_path)))
             except OSError as e:
                 print(f"reveille: cannot write config {cfg_path}: {e}",
                       file=sys.stderr)
@@ -186,9 +186,9 @@ def main(argv: list[str] | None = None) -> int:
                   file=sys.stderr)
             return 2
         adopted = {"label": js["label"], "counter": js["next"],
-                   "config": str(cfg_path)}
+                   "config": core.portable_path(cfg_path)}
         records.append(core.make_adopt_record(
-            now, js["label"], js["next"], str(cfg_path)))
+            now, js["label"], js["next"], core.portable_path(cfg_path)))
         cfg = {"ends_at": cfg["ends_at"], "items": cfg["items"],
                "labels": reloaded["labels"]}
         js = core.build_report(merged, str(paths[0]), args.label, now, cfg,

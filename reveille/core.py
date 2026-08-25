@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 from pathlib import Path
 
@@ -295,6 +296,23 @@ def utc_iso(epoch: int) -> str:
 
 LEDGER_ADOPT_KEYS = ("ts", "ts_utc", "action", "label", "counter", "config")
 LEDGER_PRUNE_KEYS = ("ts", "ts_utc", "action", "removed", "config")
+
+
+def portable_path(path: str | Path) -> str:
+    """'~/…' form when the path lives under the CURRENT $HOME, verbatim
+    otherwise. Ledger records are append-only history that gets packed
+    offsite and can outlive the home they were written in; absolute
+    pack-time paths would bake a dead prefix into every line (the jog
+    v1.3.0 class, here with display-only severity since nothing reads
+    the field back — provenance stays honest on any future machine)."""
+    p = os.path.abspath(os.path.expanduser(str(path)))
+    home = os.path.expanduser("~")
+    rel = os.path.relpath(p, home)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return p
+    if rel == ".":
+        return "~"
+    return "~/" + rel.replace(os.sep, "/")
 
 
 def make_adopt_record(now: int, label: int, counter: int,

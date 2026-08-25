@@ -7,6 +7,7 @@ from reveille.cli import main
 import io
 import json
 import contextlib
+import os
 import pathlib
 import tempfile
 import unittest
@@ -102,6 +103,69 @@ class TestRecord(LedgerBase):
                        "--record", str(rp)])
         self.assertEqual(rc, 0)
         self.assertIn("could not write record", err.getvalue())
+
+
+class TestPortableConfigPath(LedgerBase):
+    """v1.6.0: ledger records store the config path HOME-RELATIVE ('~/…')
+    when it lives under $HOME so records survive a home change; paths
+    outside $HOME stay verbatim. Nothing reads the field back (rollup
+    ignores it) — this pins the stored bytes."""
+
+    def test_adopt_record_config_home_relative(self):
+        home = self._td.name
+        cp = pathlib.Path(home) / "cfg.toml"
+        cp.write_text("[labels]\nbase = 60\n", encoding="utf-8")
+        rp = pathlib.Path(home) / "hist.jsonl"
+        with mock.patch.dict("os.environ", {"HOME": home}):
+            rc = main([self._journal(), "--label", "#9", "--now",
+                       "1787522750", "--config", str(cp), "--adopt",
+                       "--record", str(rp)])
+        self.assertEqual(rc, 0)
+        rec = json.loads(rp.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual(rec["config"], "~/cfg.toml")
+
+    def test_prune_record_config_home_relative(self):
+        home = self._td.name
+        cp = pathlib.Path(home) / "cfg.toml"
+        cp.write_text("[labels]\nbase = 60\n[labels.map]\n'2' = 90\n"
+                      "'3' = 70\n", encoding="utf-8")
+        rp = pathlib.Path(home) / "hist.jsonl"
+        with mock.patch.dict("os.environ", {"HOME": home}):
+            rc = main([self._journal(), "--label", "#9", "--now",
+                       "1787522750", "--config", str(cp), "--prune-stale",
+                       "--adopt", "--record", str(rp)])
+        self.assertEqual(rc, 0)
+        recs = [json.loads(l) for l in
+                rp.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([r["action"] for r in recs], ["prune", "adopt"])
+        for rec in recs:
+            self.assertEqual(rec["config"], "~/cfg.toml")
+
+    def test_outside_home_stored_verbatim(self):
+        cp = pathlib.Path(self._td.name) / "cfg.toml"
+        cp.write_text("[labels]\nbase = 60\n", encoding="utf-8")
+        rp = pathlib.Path(self._td.name) / "hist.jsonl"
+        rc = main([self._journal(), "--label", "#9", "--now", "1787522750",
+                   "--config", str(cp), "--adopt", "--record", str(rp)])
+        self.assertEqual(rc, 0)
+        rec = json.loads(rp.read_text(encoding="utf-8").splitlines()[0])
+        self.assertNotIn("~", str(rec["config"]))
+        self.assertTrue(str(rec["config"]).endswith("cfg.toml"))
+
+    def test_portable_path_unit_shapes(self):
+        home = os.path.expanduser("~")
+        self.assertEqual(core.portable_path(home + "/x/cfg.toml"),
+                         "~/x/cfg.toml")
+        self.assertEqual(core.portable_path("~/x/cfg.toml"), "~/x/cfg.toml")
+        self.assertEqual(core.portable_path(home), "~")
+        outside = pathlib.Path(tempfile.gettempdir()) / "cfg.toml"
+        if not outside.resolve().is_relative_to(pathlib.Path(home)):
+            self.assertEqual(core.portable_path(str(outside)),
+                             str(outside))
+        # sibling-of-home prefix must NOT collapse (component boundary)
+        sib = str(pathlib.Path(home).parent / (pathlib.Path(home).name + "x")
+                  / "cfg.toml")
+        self.assertEqual(core.portable_path(sib), sib)
 
 
 NOW = 1790000000

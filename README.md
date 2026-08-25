@@ -59,7 +59,7 @@ python3 -m reveille [JOURNAL ...] [options]
 | `--now EPOCH` | inject current time (tests/cron determinism) |
 | `--adopt` | on mismatch, write pin `label -> journal counter` into `[labels.map]`, re-check same run; refuses on disagreeing existing pin |
 | `--prune-stale` | remove pins that invert the label→counter order (retired-epoch leftovers); runs before `--adopt` |
-| `--record FILE` | history ledger: append one JSON line per EFFECTIVE mutation (prune/adopt); best-effort — a broken path warns to stderr and never changes a verdict |
+| `--record FILE` | history ledger: append one JSON line per EFFECTIVE mutation (prune/adopt); best-effort — a broken path warns to stderr and never changes a verdict. Since v1.6.0 the record's `config` field stores the path HOME-RELATIVE (`~/…`) when it lives under `$HOME` (verbatim otherwise), so ledgers packed offsite stay meaningful after a home change — the same portability rule jog/muster state follows. Stored lines are never rewritten |
 | `--history FILE` | read a ledger back instead of auditing: mutation count, newest age, per-label rollup (`#9 adopt -> s73` / `#5 pruned (=s62)`) |
 | `--max-age-hours N` | with `--history`: exit 1 when the newest mutation is older than N hours (strictly-greater boundary); an EMPTY or missing-ledger run is never fresh |
 | `--json` | machine output, fixed key order (`expected` v1.1.0, `adopted` v1.3.0, `pruned` v1.4.0 — each appended last) |
