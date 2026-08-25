@@ -109,5 +109,17 @@ directives out of prose into config that evaluates itself.
       disagreeing pin is never touched — genuine disagreement stays human.
       GOTCHA: bare `#20 = 51` in [labels.map] is a TOML COMMENT, not a pin
       (that is why quoted '#19' spellings exist); fixture gotcha re-hit.
-- NEXT only on demand: multiple-journal merge reporting, label history ledger,
+- [x] M6 v1.5.0 — history ledger (`--record` / `--history`). SALVAGE #8:
+      an unlogged dead session left core.py ledger functions complete and
+      tests/test_ledger.py written but died before wiring the CLI (and with
+      the known relative-import gotcha in the test module). Finished: one
+      JSON line per EFFECTIVE mutation (refusals/no-ops record nothing),
+      prune line precedes adopt line, best-effort append never changes a
+      verdict; `--history` reads back mutation count + newest age + per-label
+      rollup (last event per label wins), malformed lines skipped+counted,
+      `--max-age-hours` strictly-greater boundary with empty-ledger-is-stale.
+      GOTCHA (dead session's): clean-match fixture used label #12 against
+      base 60 expecting s73 — 60+12=72; derive expected values, never
+      eyeball (fixture-arithmetic class, third strike).
+- NEXT only on demand: multiple-journal merge reporting,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).

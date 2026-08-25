@@ -4,6 +4,7 @@ standing items. Pure functions wherever possible."""
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import re
 from pathlib import Path
 
@@ -283,6 +284,124 @@ def remove_map_pins(text: str, labels: set[int]) -> tuple[str, list[dict]]:
         out_lines.append(line)
     removed.sort(key=lambda d: d["label"])
     return "".join(out_lines), removed
+
+
+def utc_iso(epoch: int) -> str:
+    return _dt.datetime.fromtimestamp(int(epoch), _dt.timezone.utc) \
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- history ledger -------------------------------------------------------
+
+LEDGER_ADOPT_KEYS = ("ts", "ts_utc", "action", "label", "counter", "config")
+LEDGER_PRUNE_KEYS = ("ts", "ts_utc", "action", "removed", "config")
+
+
+def make_adopt_record(now: int, label: int, counter: int,
+                      config_path: str) -> dict:
+    return {"ts": int(now), "ts_utc": utc_iso(now), "action": "adopt",
+            "label": label, "counter": counter, "config": config_path}
+
+
+def make_prune_record(now: int, removed: list[dict],
+                      config_path: str) -> dict:
+    return {"ts": int(now), "ts_utc": utc_iso(now), "action": "prune",
+            "removed": removed, "config": config_path}
+
+
+def append_record(path: Path, rec: dict) -> None:
+    """One JSON line per effective mutation. Raises OSError to the caller
+    (which warns best-effort style and never lets it change the verdict)."""
+    line = json.dumps(rec) + "\n"
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+
+
+def load_ledger(path: Path) -> tuple[list[dict], int]:
+    """(events sorted by ts, bad_line_count). Malformed/foreign lines are
+    skipped and counted, never fatal."""
+    events: list[dict] = []
+    bad = 0
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        raise
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            bad += 1
+            continue
+        if not isinstance(obj, dict) or obj.get("action") not in \
+                ("adopt", "prune") or not isinstance(obj.get("ts"), int):
+            bad += 1
+            continue
+        events.append(obj)
+    events.sort(key=lambda e: e["ts"])
+    return events, bad
+
+
+HISTORY_KEY_ORDER = ("mutations", "bad_lines", "newest_ts_utc",
+                     "newest_age_hours", "labels")
+
+
+def build_history(events: list[dict], bad_lines: int, now: int,
+                  max_hours: float | None = None) -> dict:
+    """History-mode report. Fixed key order; 'fresh' appends LAST and only
+    under --max-age-hours (append-only growth of the fixed order)."""
+    newest_ts = max((e["ts"] for e in events), default=None)
+    age = None if newest_ts is None else \
+        round(max(0, now - newest_ts) / 3600.0, 2)
+    # per-label rollup: each label's LAST touching event wins
+    roll: dict[int, dict] = {}
+    for e in events:  # ts-sorted → later overwrite earlier
+        if e["action"] == "adopt":
+            roll[e["label"]] = {"label": e["label"],
+                                "last_action": "adopt",
+                                "session": e["counter"], "ts": e["ts"]}
+        else:
+            for r in e.get("removed") or []:
+                roll[r["label"]] = {"label": r["label"],
+                                    "last_action": "pruned",
+                                    "session": r["counter"], "ts": e["ts"]}
+    labels = [roll[k] for k in sorted(roll)]
+    js = {
+        "mutations": len(events),
+        "bad_lines": bad_lines,
+        "newest_ts_utc": utc_iso(newest_ts) if newest_ts is not None else None,
+        "newest_age_hours": age,
+        "labels": [{k: v for k, v in d.items() if k != "ts"} for d in labels],
+    }
+    if max_hours is not None:
+        fresh = bool(events) and age is not None and age <= max_hours
+        js["fresh"] = fresh
+    return {k: js[k] for k in js}  # insertion order == fixed order
+
+
+def render_history_human(js: dict) -> str:
+    n = js["mutations"]
+    head = f"reveille HISTORY: {n} mutation(s)"
+    if js["newest_age_hours"] is not None:
+        head += f", newest {js['newest_age_hours']}h ago"
+    lines = [head]
+    for lab in js["labels"]:
+        if lab["last_action"] == "adopt":
+            lines.append(f"#{lab['label']} adopt -> s{lab['session']}")
+        else:
+            lines.append(f"#{lab['label']} pruned (=s{lab['session']})")
+    return "\n".join(lines)
+
+
+def history_statusline(js: dict) -> str:
+    if js.get("fresh") is False:
+        if js["mutations"] == 0:
+            return "reveille STALE: no records"
+        return (f"reveille STALE: last mutation "
+                f"{js['newest_age_hours']}h ago")
+    return render_history_human(js).splitlines()[0]
 
 
 def build_report(text: str, journal_path: str, label_raw: str | None,

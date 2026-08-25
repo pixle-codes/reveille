@@ -59,6 +59,9 @@ python3 -m reveille [JOURNAL ...] [options]
 | `--now EPOCH` | inject current time (tests/cron determinism) |
 | `--adopt` | on mismatch, write pin `label -> journal counter` into `[labels.map]`, re-check same run; refuses on disagreeing existing pin |
 | `--prune-stale` | remove pins that invert the label→counter order (retired-epoch leftovers); runs before `--adopt` |
+| `--record FILE` | history ledger: append one JSON line per EFFECTIVE mutation (prune/adopt); best-effort — a broken path warns to stderr and never changes a verdict |
+| `--history FILE` | read a ledger back instead of auditing: mutation count, newest age, per-label rollup (`#9 adopt -> s73` / `#5 pruned (=s62)`) |
+| `--max-age-hours N` | with `--history`: exit 1 when the newest mutation is older than N hours (strictly-greater boundary); an EMPTY or missing-ledger run is never fresh |
 | `--json` | machine output, fixed key order (`expected` v1.1.0, `adopted` v1.3.0, `pruned` v1.4.0 — each appended last) |
 | `--statusline` | one-liner: `reveille s73 · 4d 23h left · standing: none` |
 
@@ -137,6 +140,33 @@ python3 -m reveille --label "#19" --adopt --prune-stale
 
 `--json` appends `"pruned"` last when the flag is used; the statusline gains
 a `N stale pruned` segment only when something was actually cut.
+
+#### History ledger (`--record` / `--history`)
+
+Adoptions and prunes are config mutations worth remembering: a point-in-time
+briefing cannot say WHEN a pin was last touched or whether the map has gone
+stale. `--record FILE.jsonl` appends one JSON line per EFFECTIVE mutation
+(fixed key order — `ts/ts_utc/action/label/counter/config` for adopts,
+`ts/ts_utc/action/removed/config` for prunes; prune-then-adopt in one run
+writes two lines in that order). Refused adoptions and no-op runs record
+nothing. The append is best-effort: an unwritable path warns
+`could not write record` on stderr and never changes a verdict or exit code.
+
+`reveille --history FILE.jsonl` reads the ledger back: mutation count,
+newest-mutation age, and a per-label rollup (each label's LAST touching
+event wins). Malformed/foreign lines are skipped and counted on stderr,
+never fatal.
+
+```sh
+python3 -m reveille --history ~/.local/share/reveille/history.jsonl \
+    --max-age-hours 168 --statusline
+# -> reveille HISTORY: 12 mutation(s), newest 6.1h ago   (exit 0)
+# -> reveille STALE: last mutation 200.4h ago            (exit 1)
+```
+
+Without `--max-age-hours` history is informational (exit 0). With it, the
+boundary is strictly-greater and an empty ledger counts as NOT fresh —
+absence of evidence is not health.
 
 ### Exit codes
 

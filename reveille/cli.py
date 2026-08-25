@@ -37,6 +37,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="remove pins that invert the label->counter order "
                         "(leftovers of a retired harness-numbering epoch); "
                         "runs before --adopt so a reused label can re-adopt")
+    p.add_argument("--record", default=None, metavar="FILE",
+                   help="history ledger: append one JSON line per EFFECTIVE "
+                        "mutation (prune/adopt); best-effort, never changes "
+                        "a verdict or exit code")
+    p.add_argument("--history", default=None, metavar="FILE",
+                   help="read a --record ledger back instead of auditing: "
+                        "mutation count, newest age, per-label rollup")
+    p.add_argument("--max-age-hours", type=float, default=None,
+                   help="with --history: exit 1 when the newest mutation is "
+                        "older than N hours (strictly-greater boundary); an "
+                        "EMPTY ledger counts as NOT fresh")
     p.add_argument("--json", action="store_true", dest="as_json")
     p.add_argument("--statusline", action="store_true")
     p.add_argument("--version", action="version",
@@ -44,9 +55,41 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _run_history(args, now: int) -> int:
+    if args.adopt or args.prune_stale:
+        print("reveille: --history reads a ledger; it cannot be combined "
+              "with --adopt/--prune-stale", file=sys.stderr)
+        return 2
+    if args.max_age_hours is not None and args.max_age_hours < 0:
+        print("reveille: --max-age-hours must be >= 0", file=sys.stderr)
+        return 2
+    try:
+        events, bad = core.load_ledger(Path(args.history).expanduser())
+    except OSError as e:
+        print(f"reveille: cannot read ledger {args.history}: {e}",
+              file=sys.stderr)
+        return 2
+    js = core.build_history(events, bad, now, args.max_age_hours)
+    if bad:
+        print(f"reveille: {bad} unparseable line(s) skipped", file=sys.stderr)
+    if args.as_json:
+        print(json.dumps(js))
+    elif args.statusline:
+        print(core.history_statusline(js))
+    else:
+        print(core.render_history_human(js))
+    if args.max_age_hours is not None and not js.get("fresh", False):
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     now = args.now if args.now is not None else int(time.time())
+
+    if args.history is not None:
+        return _run_history(args, now)
+
     paths = [Path(j).expanduser() for j in args.journals] or \
             [Path("~/journal/STATE.md").expanduser()]
 
@@ -74,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     merged = "\n".join(texts)
 
     pruned: list[dict] | None = None
+    records: list[dict] = []
     if args.prune_stale:
         stale = core.find_stale_pins((cfg.get("labels") or {}).get("map")
                                      or {})
@@ -90,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
                     cfg = {"ends_at": cfg["ends_at"], "items": cfg["items"],
                            "labels": reloaded["labels"]}
                     pruned = removed
+                    records.append(core.make_prune_record(
+                        now, removed, str(cfg_path)))
             except OSError as e:
                 print(f"reveille: cannot write config {cfg_path}: {e}",
                       file=sys.stderr)
@@ -141,12 +187,23 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         adopted = {"label": js["label"], "counter": js["next"],
                    "config": str(cfg_path)}
+        records.append(core.make_adopt_record(
+            now, js["label"], js["next"], str(cfg_path)))
         cfg = {"ends_at": cfg["ends_at"], "items": cfg["items"],
                "labels": reloaded["labels"]}
         js = core.build_report(merged, str(paths[0]), args.label, now, cfg,
                                adopted)
         if pruned is not None:
             js["pruned"] = pruned
+
+    if args.record and records:
+        rec_path = Path(args.record).expanduser()
+        try:
+            for rec in records:
+                core.append_record(rec_path, rec)
+        except OSError as e:
+            print(f"reveille: could not write record {rec_path}: {e}",
+                  file=sys.stderr)
 
     if args.as_json:
         print(json.dumps(js))
