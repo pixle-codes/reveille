@@ -55,6 +55,48 @@ class TestDeriveCounter(unittest.TestCase):
         text = "- **s9 old**\nmid-text s4 ref\n- **s12 new**\n"
         self.assertEqual(core.derive_counter(text), (13, 12))
 
+    # --- s158: the s157 incident — a completion recorded ONLY as an
+    # inline project-block stamp leaves no `- **sNN` head, so the old
+    # heads-only derivation stalled one behind and --adopt pinned a
+    # duplicate counter (#83 -> 156 while #82 -> 156 existed).
+
+    def test_headless_completion_stamp_counts(self):
+        text = ("- **s154 block**\n- **s155 block**\n"
+                "- **extaudit** (`projects/extaudit`) —\n"
+                "  **M1 BUILT s156 — PRODUCT SESSION** (WIP pushed)\n")
+        self.assertEqual(core.derive_counter(text), (157, 156))
+
+    def test_shipped_stamp_counts(self):
+        text = ("- **s136 block**\n"
+                "- **muster** — v1.5.2 SHIPPED s137 (tag pushed)\n")
+        self.assertEqual(core.derive_counter(text), (138, 137))
+
+    def test_kind_session_stamp_counts(self):
+        text = "- **s120 block**\nprose wrap-up: salvaged work s121 SALVAGE session\n"
+        self.assertEqual(core.derive_counter(text), (122, 121))
+
+    def test_nextme_forward_declaration_never_inflates(self):
+        text = ("- **s154 block**\n- **s155 block**\n"
+                "  **M1 BUILT s156 — PRODUCT SESSION**\n"
+                "- **NEXT-ME (s158 = LAB by cadence: s146,s149 Lab; "
+                "+3 = s158):\n")
+        self.assertEqual(core.derive_counter(text), (157, 156))
+
+    def test_bare_mentions_and_examples_ignored(self):
+        text = ("- **s70 block**\n"
+                "s149 safe inside s1499; mapped it to counter 156 — a "
+                "DUPLICATE; hand-built s136 earlier\n")
+        self.assertEqual(core.derive_counter(text), (71, 70))
+
+    def test_rebuilt_compound_word_not_a_stamp(self):
+        text = "- **s10 block**\nthe db was rebuilt s12 style\n"
+        self.assertEqual(core.derive_counter(text), (11, 10))
+
+    def test_heads_dominate_when_higher_than_stamps(self):
+        text = ("- **s160 block**\n"
+                "  older note: v1.0.0 SHIPPED s90\n")
+        self.assertEqual(core.derive_counter(text), (161, 160))
+
 
 class TestParseLabel(unittest.TestCase):
     def test_hash_form(self):

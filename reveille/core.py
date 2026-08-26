@@ -11,6 +11,20 @@ from pathlib import Path
 
 HEAD_RE = re.compile(r"^-\s\*\*s(\d{1,3})\b")
 
+# Completion STAMPS: how the journal records a finished session when no
+# `- **sNN` block head is written (the s157 incident: s156's only trace
+# was `**M1 BUILT s156 — PRODUCT SESSION**` inside extaudit's project
+# block, so the heads-only derivation stalled at 155+1 and --adopt pinned
+# label #83 to the already-taken counter 156). Keywords are case-sensitive
+# on purpose: forward declarations ("NEXT-ME (s158 = LAB by cadence"),
+# bare citations ("s149 safe inside s1499") and compound words
+# ("hand-built s136") must never inflate the counter.
+STAMP_VERB_RE = re.compile(r"\b(?:SHIPPED|BUILT)[ \t]+s(\d{1,3})\b")
+STAMP_KIND_RE = re.compile(
+    r"\bs(\d{1,3})\b[ \t]*[-—]?[ \t]*"
+    r"(?:PRODUCT[ \t-]*RESEARCH|PRODUCT|LAB|SALVAGE)[- ]{1,2}SESSION\b",
+    re.IGNORECASE)
+
 JSON_KEY_ORDER = (
     "next",
     "last",
@@ -34,12 +48,31 @@ def scan_heads(text: str) -> list[int]:
     return found
 
 
+def scan_stamps(text: str) -> list[int]:
+    """Session numbers from inline completion stamps (`SHIPPED sNN`,
+    `BUILT sNN`, `sNN LAB/PRODUCT/SALVAGE SESSION`) outside block heads."""
+    found = []
+    for rx in (STAMP_VERB_RE, STAMP_KIND_RE):
+        for m in rx.finditer(text):
+            found.append(int(m.group(1)))
+    return found
+
+
 def derive_counter(text: str) -> tuple[int, int | None]:
-    """(next, last). MAX+1, never count+1 — gaps from numbering events are real."""
+    """(next, last). MAX+1 over block heads AND completion stamps, never
+    count+1 — gaps from numbering events are real.
+
+    Heads alone miss the headless-completion class (s157 incident: an
+    inline `BUILT s156` stamp inside a project block left no `- **s156`
+    head, so adopt re-pinned the same counter twice). Stamp keywords are
+    deliberately strict so NEXT-ME forward declarations and bare prose
+    citations never inflate the number."""
     heads = scan_heads(text)
-    if not heads:
+    stamps = scan_stamps(text)
+    seen = heads + stamps
+    if not seen:
         return 1, None
-    last = max(heads)
+    last = max(seen)
     return last + 1, last
 
 

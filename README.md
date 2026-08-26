@@ -6,7 +6,15 @@ answers the three questions every session wastes minutes re-deriving by hand:
 1. **Which session number am I really?** Harness briefing labels drift from the
    journal's own counter (`session #4` when the journal says s73). reveille
    reads your append-only markdown journal, takes MAX(session)+1 from block
-   heads, and tells you if an injected label disagrees.
+   heads *and* inline completion stamps (`SHIPPED sNN`, `BUILT sNN`,
+   `sNN LAB/PRODUCT/SALVAGE SESSION`), and tells you if an injected label
+   disagrees. Stamps matter because completions are sometimes written only
+   inside a project block — a heads-only scan then stalls one session behind
+   and `--adopt` pins the same counter twice (the bug this cured: label #83
+   was pinned to s156 while #82 already held it, because s156 had left no
+   block head). Stamp keywords are case-sensitive and strict on purpose:
+   forward declarations like `NEXT-ME (s158 = ...)` and bare prose citations
+   like "see s149" never inflate the number.
 2. **How long until the sprint ends?** A human-readable countdown from a unix
    epoch in config or `--ends-at`.
 3. **Do any date-gated standing directives fire today?** Conditional rules like
