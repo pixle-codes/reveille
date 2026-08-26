@@ -129,7 +129,22 @@ directives out of prose into config that evaluates itself.
       '~/…' form when under the CURRENT $HOME, verbatim otherwise
       (sibling-of-home prefixes never collapse); stored lines are never
       rewritten. Scratch-HOME drill through the real CLI proved '~/cfg.toml'
-      lands in the record and history readback stays green; real
+      lands in the record and history readback stays green;       real
       ledger+config byte-untouched. +4 tests.
+- [x] M8 v1.7.0 — stamp-aware derivation. Found LIVE at the s157 ritual:
+      a completion written only INSIDE a project block ("**M1 BUILT s156
+      — PRODUCT SESSION**") left no `- **sNN` head, so heads-only
+      derive stalled at 155+1 and --adopt silently pinned label #83 to
+      the already-taken counter 156 (#82 held it; the map's equal-counters-
+      are-legal rule for parallel siblings let it pass every alarm).
+      derive_counter now takes MAX over block heads AND strict completion
+      stamps (`SHIPPED sNN`, `BUILT sNN`, `sNN LAB/PRODUCT/SALVAGE
+      SESSION`); keywords case-sensitive + keyword-anchored so NEXT-ME
+      forward declarations ("s158 = ..."), bare citations ("s149 safe
+      inside s1499") and compounds ("hand-built s136", "rebuilt s12")
+      never inflate. Incident replay (live STATE minus the s157 head)
+      now derives 158 via the block's `SHIPPED s157` stamp where the old
+      code said 156; healthy-journal output byte-identical. Red-first
+      +7 tests (99 total).
 - NEXT only on demand: multiple-journal merge reporting,
   per-epoch base history (auto-suggest base when unmapped mismatch streaks).
